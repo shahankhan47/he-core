@@ -1,0 +1,94 @@
+name: Deploy to Azure Container App
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  ACR_NAME: harmonyacr-arc6c4gnfcbxfxhm
+  ACR_LOGIN_SERVER: harmonyacr-arc6c4gnfcbxfxhm.azurecr.io
+  CONTAINER_APP_NAME: core-app-prod
+  RESOURCE_GROUP: harmony-engine-prod
+  AZURE_SUBSCRIPTION: e4d2f227-f44c-4f01-89a7-d3ae5e0377fe
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set timestamp
+        id: vars
+        run: echo "timestamp=$(date +'%Y%m%d%H%M%S')" >> $GITHUB_OUTPUT
+
+      - name: Build Docker image
+        run: |
+          docker build --no-cache -t $ACR_LOGIN_SERVER/hecore:${{ steps.vars.outputs.timestamp }} .
+
+      - name: Azure Container Registry Login
+        run: az acr login --name $ACR_NAME
+
+      - name: Push Docker image
+        run: |
+          docker push $ACR_LOGIN_SERVER/hecore:${{ steps.vars.outputs.timestamp }}
+
+      - name: Get current revision name
+        id: current_rev
+        run: |
+          CURRENT_REV=$(az containerapp revision list \
+            --name $CONTAINER_APP_NAME \
+            --resource-group $RESOURCE_GROUP \
+            --subscription $AZURE_SUBSCRIPTION \
+            --query "[?properties.active].name | [0]" -o tsv)
+          echo "current_revision=$CURRENT_REV" >> $GITHUB_OUTPUT
+
+    #   - name: Update Container App to new revision
+    #     id: deploy
+    #     run: |
+    #       az containerapp update \
+    #         --name $CONTAINER_APP_NAME \
+    #         --resource-group $RESOURCE_GROUP \
+    #         --subscription $AZURE_SUBSCRIPTION \
+    #         --image $ACR_LOGIN_SERVER/hecore:${{ steps.vars.outputs.timestamp }}
+
+    #       NEW_REV=$(az containerapp revision list \
+    #         --name $CONTAINER_APP_NAME \
+    #         --resource-group $RESOURCE_GROUP \
+    #         --subscription $AZURE_SUBSCRIPTION \
+    #         --query "[?properties.active].name | [0]" -o tsv)
+    #       echo "new_revision=$NEW_REV" >> $GITHUB_OUTPUT
+
+    #   - name: Wait and check new revision status
+    #     run: |
+    #       echo "Waiting for new revision to stabilize..."
+    #       sleep 60
+    #       STATUS=$(az containerapp revision show \
+    #         --name $CONTAINER_APP_NAME \
+    #         --resource-group $RESOURCE_GROUP \
+    #         --subscription $AZURE_SUBSCRIPTION \
+    #         --revision ${{ steps.deploy.outputs.new_revision }} \
+    #         --query "properties.healthState" -o tsv)
+    #       echo "Status: $STATUS"
+    #       if [ "$STATUS" != "Healthy" ]; then
+    #         echo "New revision unhealthy, rolling back..."
+    #         az containerapp revision set-mode \
+    #           --name $CONTAINER_APP_NAME \
+    #           --resource-group $RESOURCE_GROUP \
+    #           --subscription $AZURE_SUBSCRIPTION \
+    #           --mode single
+    #         az containerapp revision activate \
+    #           --name $CONTAINER_APP_NAME \
+    #           --resource-group $RESOURCE_GROUP \
+    #           --subscription $AZURE_SUBSCRIPTION \
+    #           --revision ${{ steps.current_rev.outputs.current_revision }}
+    #         exit 1
+    #       fi
